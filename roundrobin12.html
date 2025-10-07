@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Simulación Round-Robin</title>
+    <style>
+        /* Estilos generales del cuerpo y el contenedor principal */
+        body {
+            font-family: Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            background-color: #f0f0f0;
+            margin: 20px;
+        }
+
+        h1 {
+            color: #333;
+        }
+
+        #container {
+            width: 90%;
+            max-width: 1400px;
+            background-color: white;
+            padding: 20px;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+            border-radius: 8px;
+        }
+
+        /* Estilos para cada proceso individual */
+        .process-container {
+            display: flex;
+            align-items: center;
+            margin-bottom: 25px; /* Más espacio para las etiquetas */
+            position: relative;
+        }
+
+        .process-label {
+            width: 120px;
+            min-width: 120px;
+            font-weight: bold;
+            color: #555;
+            text-align: right;
+            margin-right: 15px;
+        }
+
+        /* Contenedor principal de las barras de progreso */
+        .progress-bar-wrapper {
+            flex-grow: 1;
+            height: 25px;
+            position: relative;
+        }
+
+        /* El contenedor de fondo gris de las barras */
+        .progress-bar-container {
+            height: 100%;
+            background-color: #e0e0e0;
+            border-radius: 5px;
+            position: relative;
+            overflow: visible; /* Las etiquetas pueden desbordarse */
+            display: flex; /* Usamos flexbox para alinear los segmentos */
+        }
+
+        /* Estilo base para cada segmento del proceso */
+        .progress-bar-segment {
+            height: 100%;
+            position: relative;
+            flex-shrink: 0;
+            border-right: 1px solid rgba(255, 255, 255, 0.4);
+        }
+
+        /* Relleno de color que se animará */
+        .progress-fill {
+            position: absolute;
+            left: 0;
+            top: 0;
+            height: 100%;
+            width: 0%;
+            transition: width 0.3s ease-in-out;
+        }
+
+        /* Etiquetas numéricas de cada segmento */
+        .segment-label {
+            position: absolute;
+            bottom: -20px; /* Posicionado debajo de la barra */
+            transform: translateX(-50%);
+            font-size: 10px;
+            color: #666;
+            white-space: nowrap;
+            text-align: center;
+            width: 100%;
+        }
+        
+        /* Estilos para las etiquetas de texto de estado */
+        .total-label {
+            margin-left: 10px;
+            color: darkgray;
+            min-width: 50px;
+            text-align: right;
+        }
+
+        .status-label {
+            margin-left: 15px;
+            font-weight: bold;
+            min-width: 100px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Simulación de Planificador Round-Robin</h1>
+    <div id="container"></div>
+
+    <script>
+        const NUM_PROCESOS = 10;
+        const QUANTUM = 10;
+        const INTERVALO = 500; // milisegundos por turno
+        const colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf'];
+
+        function generarProcesos() {
+            const procesos = [];
+            for (let i = 0; i < NUM_PROCESOS; i++) {
+                const limiteSuperiorAleatorio = Math.floor(Math.random() * 451) + 50;
+                const entradas = [];
+                let limiteInferiorActual = 1;
+                const numSegmentos = Math.floor(Math.random() * 4) + 1;
+
+                for (let j = 0; j < numSegmentos; j++) {
+                    if (limiteInferiorActual > limiteSuperiorAleatorio) break;
+                    const rangoDisponible = limiteSuperiorAleatorio - limiteInferiorActual + 1;
+                    if (rangoDisponible < 2 && j < numSegmentos - 1) break;
+
+                    let tamanoMaxSegmento = Math.max(1, Math.floor(rangoDisponible / (numSegmentos - j)));
+                    if (rangoDisponible - tamanoMaxSegmento < (numSegmentos - j - 1) * 2) {
+                        tamanoMaxSegmento = rangoDisponible - (numSegmentos - j - 1) * 2;
+                    }
+                    
+                    let tamanoSegmento = Math.floor(Math.random() * tamanoMaxSegmento) + 1;
+                    if (j === numSegmentos - 1 && rangoDisponible > 0) {
+                        tamanoSegmento = rangoDisponible;
+                    } else if (tamanoSegmento > rangoDisponible) {
+                        tamanoSegmento = rangoDisponible;
+                    }
+                    if (tamanoSegmento < 1) tamanoSegmento = 1;
+
+                    const finSegmento = limiteInferiorActual + tamanoSegmento - 1;
+                    entradas.push({ inicio: limiteInferiorActual, fin: finSegmento });
+                    limiteInferiorActual = finSegmento + 1;
+                }
+                
+                const totalUnidades = entradas.reduce((sum, entrada) => sum + (entrada.fin - entrada.inicio + 1), 0);
+                procesos.push({
+                    id: `Proceso ${i + 1}`,
+                    limite: totalUnidades,
+                    entradas: entradas,
+                    progreso: entradas.map(() => 0),
+                    completado: false
+                });
+            }
+            return procesos;
+        }
+
+        const procesos = generarProcesos();
+        const container = document.getElementById('container');
+        let procesoIdxActual = 0;
+        let simulacionInterval;
+
+        const maxLimiteGlobal = Math.max(...procesos.map(p => p.limite));
+
+        function renderizarInicial() {
+            procesos.forEach((proceso, i) => {
+                const procesoDiv = document.createElement('div');
+                procesoDiv.className = 'process-container';
+                procesoDiv.id = `proceso-${i}`;
+                
+                const anchoRelativoContenedor = (proceso.limite / maxLimiteGlobal) * 100;
+
+                procesoDiv.innerHTML = `
+                    <div class="process-label">${proceso.id}</div>
+                    <div class="progress-bar-wrapper">
+                        <div class="progress-bar-container" style="width: ${anchoRelativoContenedor}%;"></div>
+                    </div>
+                    <div class="total-label">(${proceso.limite})</div>
+                    <div class="status-label">En Espera</div>
+                `;
+                container.appendChild(procesoDiv);
+
+                const progressBarContainer = procesoDiv.querySelector('.progress-bar-container');
+                proceso.entradas.forEach((entrada, j) => {
+                    const anchoSegmentoUnidades = entrada.fin - entrada.inicio + 1;
+                    const anchoSegmentoPorcentaje = (anchoSegmentoUnidades / proceso.limite) * 100;
+
+                    const segmentBaseDiv = document.createElement('div');
+                    segmentBaseDiv.className = 'progress-bar-segment';
+                    segmentBaseDiv.style.width = `${anchoSegmentoPorcentaje}%`;
+                    
+                    const segmentFillDiv = document.createElement('div');
+                    segmentFillDiv.className = 'progress-fill';
+                    segmentFillDiv.style.backgroundColor = colors[j % colors.length];
+                    segmentFillDiv.setAttribute('data-segmento-id', j);
+                    
+                    segmentBaseDiv.appendChild(segmentFillDiv);
+                    progressBarContainer.appendChild(segmentBaseDiv);
+
+                    const labelDiv = document.createElement('span');
+                    labelDiv.className = 'segment-label';
+                    labelDiv.textContent = anchoSegmentoUnidades;
+                    segmentBaseDiv.appendChild(labelDiv);
+                });
+            });
+        }
+
+        function simularTurno() {
+            const procesosActivos = procesos.filter(p => !p.completado);
+            if (procesosActivos.length === 0) {
+                console.log("Todos los procesos han terminado.");
+                clearInterval(simulacionInterval);
+                actualizarUI(-1, -1);
+                return;
+            }
+
+            while (procesos[procesoIdxActual].completado) {
+                procesoIdxActual = (procesoIdxActual + 1) % NUM_PROCESOS;
+            }
+            
+            let procesoActual = procesos[procesoIdxActual];
+            
+            let segmentoIdx = -1;
+            for (let i = 0; i < procesoActual.entradas.length; i++) {
+                if (procesoActual.progreso[i] < (procesoActual.entradas[i].fin - procesoActual.entradas[i].inicio + 1)) {
+                    segmentoIdx = i;
+                    break;
+                }
+            }
+            
+            actualizarUI(procesoIdxActual, segmentoIdx);
+
+            if (segmentoIdx !== -1) {
+                const entrada = procesoActual.entradas[segmentoIdx];
+                const trabajoRestante = (entrada.fin - entrada.inicio + 1) - procesoActual.progreso[segmentoIdx];
+                const trabajoEnTurno = Math.min(QUANTUM, trabajoRestante);
+                
+                procesoActual.progreso[segmentoIdx] += trabajoEnTurno;
+
+                procesoActual.completado = procesoActual.entradas.every((e, i) => procesoActual.progreso[i] >= (e.fin - e.inicio + 1));
+            }
+
+            procesoIdxActual = (procesoIdxActual + 1) % NUM_PROCESOS;
+        }
+
+        function actualizarUI(procesoEjecucionIdx, segmentoActivoIdx) {
+            procesos.forEach((proceso, i) => {
+                const procesoDiv = document.getElementById(`proceso-${i}`);
+                const statusLabel = procesoDiv.querySelector('.status-label');
+                
+                if (proceso.completado) {
+                    statusLabel.textContent = 'Terminado';
+                    statusLabel.style.color = 'green';
+                } else if (i === procesoEjecucionIdx) {
+                    statusLabel.textContent = 'En Ejecución';
+                    statusLabel.style.color = 'orange';
+                } else {
+                    statusLabel.textContent = 'En Espera';
+                    statusLabel.style.color = 'grey';
+                }
+                
+                proceso.entradas.forEach((entrada, j) => {
+                    const segmentFillDiv = procesoDiv.querySelector(`.progress-fill[data-segmento-id='${j}']`);
+                    const progresoActual = proceso.progreso[j];
+                    const anchoSegmentoTotal = (entrada.fin - entrada.inicio + 1);
+                    
+                    const progresoPorcentajeSegmento = (progresoActual / anchoSegmentoTotal) * 100;
+                    segmentFillDiv.style.width = `${progresoPorcentajeSegmento}%`;
+                });
+            });
+        }
+
+        renderizarInicial();
+        simulacionInterval = setInterval(simularTurno, INTERVALO);
+    </script>
+</body>
+</html>
