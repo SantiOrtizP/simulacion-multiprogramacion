@@ -1,64 +1,50 @@
 const NUM_PROCESOS = 10;
 const QUANTUM = 10;
 const INTERVALO = 500; // milisegundos por turno
-const LATENCIA_BLOQUEO = 2; // Estará bloqueado por 2 * 500ms = 1 segundo
-const MIN_UNIDADES_POR_SEGMENTO = 5; // AÑADIDO: Mínimo de unidades que debe tener cada E/S.
-const NUM_SEGMENTOS_REQUERIDOS = 4; // Constante para la cantidad de E/S.
-const colors = ['#F54927', '#27F5B0', '#27D3F5', '#B027F5'];
+const LATENCIA_BLOQUEO = 2; // Estará bloqueado por 2 * 500ms = 1 segundo (2 intervalos)
+const MIN_UNIDADES_POR_SEGMENTO = 5; // Mínimo de unidades que debe tener cada E/S.
+const NUM_SEGMENTOS_REQUERIDOS = 4; // Cantidad de E/S forzosas.
+const colors = ['#BB4119', '#41BB19', '#1993BB', '#4119BB'];
 
 function generarProcesos() {
     const procesos = [];
-    
+
     for (let i = 0; i < NUM_PROCESOS; i++) {
-        const limiteTotal = Math.floor(Math.random() * 100) + 100; // Total de unidades del proceso (50 a 500)
+        // Rango de 100 a 200 unidades
+        const limiteTotal = Math.floor(Math.random() * 101) + 100;
         const entradas = [];
         
-        // 1. Calcular el espacio 'libre' para la aleatoriedad
         const espacioMinimoTotal = MIN_UNIDADES_POR_SEGMENTO * NUM_SEGMENTOS_REQUERIDOS;
         
-        // Si el límite total es muy pequeño, aseguramos que tenga espacio.
         if (limiteTotal < espacioMinimoTotal) {
-             console.warn(`Límite total ajustado a ${espacioMinimoTotal} para garantizar el mínimo.`);
              limiteTotal = espacioMinimoTotal;
         }
 
         const rangoAleatorioDisponible = limiteTotal - espacioMinimoTotal;
         
-        // 2. Generar 3 puntos de corte aleatorios DENTRO DEL RANGO DISPONIBLE
         let puntosCorteAleatorios = [];
         for (let k = 0; k < NUM_SEGMENTOS_REQUERIDOS - 1; k++) {
-            // Generamos puntos de corte entre 0 y el rango disponible
             puntosCorteAleatorios.push(Math.floor(Math.random() * rangoAleatorioDisponible));
         }
         
-        // 3. Ordenar y agregar los puntos de inicio/fin (0 y limiteTotal)
         puntosCorteAleatorios.sort((a, b) => a - b);
         
-        // 4. Transformar los puntos de corte aleatorios en límites reales con el mínimo garantizado
         let puntosCorteReales = [];
-        let acumuladorMinimo = 0;
-        
         for (let j = 0; j < NUM_SEGMENTOS_REQUERIDOS - 1; j++) {
-            // El límite real es: (El punto de corte aleatorio) + (El mínimo acumulado de los segmentos anteriores)
             const ajusteMinimo = (j + 1) * MIN_UNIDADES_POR_SEGMENTO;
-            
-            // El punto de corte real es: el valor aleatorio + el ajuste de la reserva mínima
             puntosCorteReales.push(puntosCorteAleatorios[j] + ajusteMinimo);
         }
         
-        // Los límites finales son: [0, CorteReal1, CorteReal2, CorteReal3, LimiteTotal]
         const limites = [0, ...puntosCorteReales, limiteTotal];
 
-        // 5. Crear los 4 segmentos de forma contigua
         for (let j = 0; j < NUM_SEGMENTOS_REQUERIDOS; j++) {
             const inicio = limites[j] + 1;
             const fin = limites[j + 1];
             
             if (inicio <= fin) {
                  entradas.push({ inicio: inicio, fin: fin });
-            } else {
-                 // Esto no debería ocurrir con la nueva lógica, pero mantenemos la seguridad.
-                 entradas.push({ inicio: inicio, fin: inicio }); 
+            } else if (j === NUM_SEGMENTOS_REQUERIDOS - 1) {
+                entradas.push({ inicio: limites[j], fin: limites[j+1] });
             }
         }
         
@@ -71,12 +57,13 @@ function generarProcesos() {
             progreso: entradas.map(() => 0),
             completado: false,
             bloqueado: false,
-            tiempoBloqueoRestante: 0 
+            tiempoBloqueoRestante: 0,
+            tiempoEspera: 0
         });
     }
     return procesos;
 }
-// Resto del código (constantes y funciones) permanece igual...
+
 const procesos = generarProcesos();
 const container = document.getElementById('container');
 let procesoIdxActual = 0;
@@ -84,8 +71,9 @@ let simulacionInterval;
 
 const maxLimiteGlobal = Math.max(...procesos.map(p => p.limite));
 
+// --- Funciones de Renderizado ---
+
 function renderizarInicial() {
-    // ... (El resto de la función renderizarInicial es la misma)
     procesos.forEach((proceso, i) => {
         const procesoDiv = document.createElement('div');
         procesoDiv.className = 'process-container';
@@ -128,74 +116,18 @@ function renderizarInicial() {
     });
 }
 
-function simularTurno() {
-    // ... (El resto de la función simularTurno es la misma)
-    // 1. Manejar procesos bloqueados
-    procesos.forEach(p => {
-        if (p.bloqueado) {
-            p.tiempoBloqueoRestante--;
-            if (p.tiempoBloqueoRestante <= 0) {
-                p.bloqueado = false; // El proceso se desbloquea
-            }
-        }
-    });
-
-    const procesosActivos = procesos.filter(p => !p.completado && !p.bloqueado);
-    if (procesosActivos.length === 0) {
-        if (procesos.every(p => p.completado)) {
-            console.log("Todos los procesos han terminado.");
-            clearInterval(simulacionInterval);
-            actualizarUI(-1, -1);
-            return;
-        }
-    }
-
-    // 2. Encontrar el siguiente proceso no terminado Y NO BLOQUEADO
-    while (procesos[procesoIdxActual].completado || procesos[procesoIdxActual].bloqueado) {
-        procesoIdxActual = (procesoIdxActual + 1) % NUM_PROCESOS;
-    }
+function actualizarPanelMétricas(proceso) {
+    const trabajoCompletado = proceso.progreso.reduce((sum, p) => sum + p, 0);
+    const tiempoRestante = proceso.limite - trabajoCompletado;
     
-    let procesoActual = procesos[procesoIdxActual];
-    
-    let segmentoIdx = -1;
-    for (let i = 0; i < procesoActual.entradas.length; i++) {
-        if (procesoActual.progreso[i] < (procesoActual.entradas[i].fin - procesoActual.entradas[i].inicio + 1)) {
-            segmentoIdx = i;
-            break;
-        }
-    }
-    
-    actualizarUI(procesoIdxActual, segmentoIdx);
-
-    let segmentoCompletado = false;
-
-    if (segmentoIdx !== -1) {
-        const entrada = procesoActual.entradas[segmentoIdx];
-        const trabajoRestante = (entrada.fin - entrada.inicio + 1) - procesoActual.progreso[segmentoIdx];
-        const trabajoEnTurno = Math.min(QUANTUM, trabajoRestante);
-        
-        procesoActual.progreso[segmentoIdx] += trabajoEnTurno;
-
-        // Verificar si el segmento terminó en este turno
-        if (procesoActual.progreso[segmentoIdx] >= (entrada.fin - entrada.inicio + 1)) {
-             segmentoCompletado = true;
-        }
-
-        // Verificar si el proceso terminó por completo
-        procesoActual.completado = procesoActual.entradas.every((e, i) => procesoActual.progreso[i] >= (e.fin - e.inicio + 1));
-    }
-
-    // 3. Bloquear el proceso si terminó un segmento y NO es el último segmento del proceso
-    if (segmentoCompletado && !procesoActual.completado) {
-        procesoActual.bloqueado = true;
-        procesoActual.tiempoBloqueoRestante = LATENCIA_BLOQUEO;
-    }
-
-    procesoIdxActual = (procesoIdxActual + 1) % NUM_PROCESOS;
+    document.getElementById('metric-name').textContent = `Proceso: ${proceso.id}`;
+    document.getElementById('metric-burst').textContent = `Ejecución (Q): ${QUANTUM}`; 
+    document.getElementById('metric-wait').textContent = `Espera: ${proceso.tiempoEspera}`;
+    document.getElementById('metric-remaining').textContent = `Restante: ${tiempoRestante}`;
 }
 
-function actualizarUI(procesoEjecucionIdx, segmentoActivoIdx) {
-    // ... (El resto de la función actualizarUI es la misma)
+
+function actualizarUI(procesoEjecucionIdx) {
     procesos.forEach((proceso, i) => {
         const procesoDiv = document.getElementById(`proceso-${i}`);
         const statusLabel = procesoDiv.querySelector('.status-label');
@@ -225,8 +157,104 @@ function actualizarUI(procesoEjecucionIdx, segmentoActivoIdx) {
     });
 }
 
+// --- Lógica Principal de la Simulación ---
+
+function simularTurno() {
+    let procesoEjecutandoAhora = null;
+    let procesoEjecutado = false;
+
+    // 1. Manejar el avance del tiempo de espera y desbloqueo para TODOS los procesos
+    procesos.forEach((p, i) => {
+        if (p.completado) return;
+
+        if (p.bloqueado) {
+            p.tiempoBloqueoRestante--;
+            p.tiempoEspera += QUANTUM;
+            if (p.tiempoBloqueoRestante <= 0) {
+                p.bloqueado = false;
+            }
+        } else if (i !== procesoIdxActual) {
+            // El tiempo de espera se actualiza aquí, excepto para el que se va a ejecutar
+            p.tiempoEspera += QUANTUM;
+        }
+    });
+
+    // 2. Encontrar el proceso que ejecutará en este turno (Round Robin)
+    let inicioBusqueda = procesoIdxActual;
+    let procesoEncontrado = false;
+    let procesosAunActivos = procesos.filter(p => !p.completado).length;
+
+    if (procesosAunActivos === 0) {
+        // La simulación ha terminado completamente
+        clearInterval(simulacionInterval);
+        actualizarUI(-1);
+        return;
+    }
+
+    do {
+        if (!procesos[procesoIdxActual].completado && !procesos[procesoIdxActual].bloqueado) {
+            procesoEjecutandoAhora = procesos[procesoIdxActual];
+            procesoEncontrado = true;
+            break;
+        }
+        procesoIdxActual = (procesoIdxActual + 1) % NUM_PROCESOS;
+    } while (procesoIdxActual !== inicioBusqueda);
+
+    if (!procesoEncontrado) {
+         // Si todos están bloqueados, no ejecutamos nada, solo actualizamos UI
+         actualizarUI(-1);
+         procesoIdxActual = (procesoIdxActual + 1) % NUM_PROCESOS;
+         return;
+    }
+
+    // 3. Ejecutar el turno
+    
+    let segmentoIdx = -1;
+    for (let i = 0; i < procesoEjecutandoAhora.entradas.length; i++) {
+        if (procesoEjecutandoAhora.progreso[i] < (procesoEjecutandoAhora.entradas[i].fin - procesoEjecutandoAhora.entradas[i].inicio + 1)) {
+            segmentoIdx = i;
+            break;
+        }
+    }
+
+    if (segmentoIdx !== -1) {
+        const entrada = procesoEjecutandoAhora.entradas[segmentoIdx];
+        const trabajoRestante = (entrada.fin - entrada.inicio + 1) - procesoEjecutandoAhora.progreso[segmentoIdx];
+        const trabajoEnTurno = Math.min(QUANTUM, trabajoRestante);
+        
+        procesoEjecutandoAhora.progreso[segmentoIdx] += trabajoEnTurno;
+
+        let segmentoCompletado = (procesoEjecutandoAhora.progreso[segmentoIdx] >= (entrada.fin - entrada.inicio + 1));
+        
+        procesoEjecutandoAhora.completado = procesoEjecutandoAhora.entradas.every(
+            (e, i) => procesoEjecutandoAhora.progreso[i] >= (e.fin - e.inicio + 1)
+        );
+
+        // 4. Bloquear si terminó un segmento y no todo el proceso
+        if (segmentoCompletado && !procesoEjecutandoAhora.completado) {
+            procesoEjecutandoAhora.bloqueado = true;
+            procesoEjecutandoAhora.tiempoBloqueoRestante = LATENCIA_BLOQUEO;
+        }
+        procesoEjecutado = true;
+    }
+    
+    // 5. Preparar para el siguiente turno y actualizar métricas
+    if (procesoEjecutado) {
+        // LLAMADA CRÍTICA: Actualizar métricas DESPUÉS de que el progreso y el estado final han sido determinados.
+        actualizarPanelMétricas(procesoEjecutandoAhora);
+        procesoIdxActual = (procesoIdxActual + 1) % NUM_PROCESOS;
+    }
+
+    // Actualizar la interfaz visual de las barras y estados
+    actualizarUI(procesoEncontrado ? procesoEjecutandoAhora.id.split(' ')[1] - 1 : -1);
+}
+
+
 // Iniciar la simulación cuando la página esté lista
 document.addEventListener('DOMContentLoaded', () => {
     renderizarInicial();
+    if (procesos.length > 0) {
+        actualizarPanelMétricas(procesos[0]);
+    }
     simulacionInterval = setInterval(simularTurno, INTERVALO);
 });

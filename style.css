@@ -4,12 +4,13 @@ body {
     display: flex;
     flex-direction: column;
     align-items: center;
-    background-color: #f0f0f0;
+    background-color: #ddecec;
     margin: 20px;
 }
 
 h1 {
     color: #333;
+    font-family: 'Trebuchet MS', 'Lucida Sans Unicode', 'Lucida Grande', 'Lucida Sans', Arial, sans-serif;
 }
 
 #container {
@@ -99,4 +100,21 @@ h1 {
     margin-left: 15px;
     font-weight: bold;
     min-width: 100px;
+}
+/* NUEVOS ESTILOS para el panel de métricas */
+#metrics-panel {
+    background-color: #e6f7ff;
+    border: 1px solid #91d5ff;
+    padding: 15px;
+    margin-bottom: 20px;
+    border-radius: 6px;
+    width: 90%;
+    max-width: 1400px;
+    text-align: center;
+}
+
+#metrics-panel span {
+    font-weight: bold;
+    color: #0050b3;
+    margin: 0 10px;
 }
